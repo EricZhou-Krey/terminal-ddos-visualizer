@@ -20,15 +20,13 @@ async fn get_content() -> String {
         HeaderValue::from_str(&format!("Bearer {}", token)).expect("Invalid API Token format");
 
     let end_time: DateTime<Utc> = SystemTime::now().into();
-    let start_time: DateTime<Utc> = end_time - TimeDelta::minutes(360);
+    let start_time: DateTime<Utc> = end_time - TimeDelta::minutes(30);
 
-    let layer: &str = "7";
-    let protocol: &str = "http_method";
-
-    let endpoint_url = format!("https://api.cloudflare.com/client/v4/radar/attacks/layer{layer}/timeseries_groups/{protocol}?dateStart={}&dateEnd={}&resolution=5m",      
-        start_time.format("%Y-%m-%dT%H:%M:00Z"),
-        end_time.format("%Y-%m-%dT%H:%M:00Z")
-        );
+    let endpoint_url = format!(
+        "https://api.cloudflare.com/client/v4/radar/attacks/layer7/top/attacks?dateStart={}&dateEnd={}",
+        start_time.format("%Y-%m-%dT%H:%M:%SZ"),
+        end_time.format("%Y-%m-%dT%H:%M:%SZ")
+    );
 
     let response = client
         .get(endpoint_url)
