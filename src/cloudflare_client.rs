@@ -32,6 +32,10 @@ impl DDOSAttack {
     pub fn get_content(&self) -> (&str, &str) {
         (&self.origin_country_name, &self.target_country_name)
     }
+
+    pub fn get_codes(&self) -> (&str, &str) {
+        (&self.origin_country_alpha2, &self.target_country_alpha2)
+    }
 }
 
 pub trait DDOSProvider {

@@ -1,16 +1,17 @@
 use std::collections::{HashMap, VecDeque};
 
 use chrono::TimeDelta;
+use nationify::{by_iso_code, Country};
 
 use crate::cloudflare_client::{CloudflareDDOSCompoent, DDOSAttack, DDOSProvider};
-use crossterm::event::{self, Event};
+use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
     style::Color,
     symbols::Marker,
     widgets::{
-        canvas::{Canvas, Map, MapResolution},
+        canvas::{Canvas, Line, Map, MapResolution},
         Block, Borders, List, Paragraph, Tabs, Widget,
     },
     DefaultTerminal,
@@ -38,12 +39,13 @@ impl AppSettings {
     pub fn new() -> Self {
         Self {
             current_region: Region::default(),
-            time_interval: TimeDelta::minutes(360),
+            time_interval: TimeDelta::minutes(36000),
         }
     }
 }
 #[derive(Debug)]
 pub struct App<T: DDOSProvider> {
+    tab_code: usize,
     ddos_componet: T,
     ddos_attack_queue: VecDeque<DDOSAttack>,
     settings: AppSettings,
@@ -52,6 +54,7 @@ pub struct App<T: DDOSProvider> {
 impl App<CloudflareDDOSCompoent> {
     pub fn new(settings: AppSettings) -> Self {
         Self {
+            tab_code: 0,
             ddos_componet: CloudflareDDOSCompoent::new(),
             ddos_attack_queue: VecDeque::new(),
             settings,
@@ -70,10 +73,29 @@ impl App<CloudflareDDOSCompoent> {
             let _ = terminal.draw(|frame| {
                 frame.render_widget(&self, frame.area());
             });
-            if matches!(event::read()?, Event::Key(_)) {
-                break Ok(());
+            self.handle_events()?;
+        }
+    }
+
+    fn handle_events(&mut self) -> std::io::Result<()> {
+        if let Event::Key(key) = event::read()?
+            && key.kind == KeyEventKind::Press
+        {
+            match key.code {
+                KeyCode::Left => {
+                    if self.tab_code > 0 {
+                        self.tab_code -= 1;
+                    }
+                }
+                KeyCode::Right => {
+                    if self.tab_code < 6 {
+                        self.tab_code += 1;
+                    }
+                }
+                _ => {}
             }
         }
+        Ok(())
     }
 }
 
@@ -124,17 +146,46 @@ impl<T: DDOSProvider> Widget for &App<T> {
             buffer,
         );
 
+        let (x_map_bounds, y_map_bounds) = match self.tab_code {
+            0 => ([-180.0, 180.0], [-90.0, 90.0]),
+            1 => ([-9.0, 66.0], [36.0, 71.0]),
+            2 => ([26.0, 169.0], [-11.0, 82.0]),
+            3 => ([72.0, 168.0], [-55.0, -9.0]),
+            4 => ([-172.0, -11.0], [5.0, 83.0]),
+            5 => ([-92.0, -28.0], [-56.0, 12.0]),
+            6 => ([-17.0, 51.0], [-35.0, 37.0]),
+            _ => ([-180.0, 180.0], [-90.0, 90.0]),
+        };
+        let ddos_lines: Vec<Line> = self
+            .ddos_attack_queue
+            .iter()
+            .map(|ddos_attack| {
+                let (origin, target) = ddos_attack.get_codes();
+                let origin_country = by_iso_code(origin).unwrap();
+                let target_country = by_iso_code(target).unwrap();
+                Line {
+                    x1: origin_country.geo.longitude,
+                    x2: target_country.geo.longitude,
+                    y1: origin_country.geo.latitude,
+                    y2: target_country.geo.latitude,
+                    color: Color::White,
+                }
+            })
+            .collect();
         let map_block = Block::new().borders(Borders::ALL).title("Map");
         let map_content = Canvas::default()
             .marker(Marker::Braille)
-            .paint(|ctx| {
+            .paint(move |ctx| {
                 ctx.draw(&Map {
                     color: Color::Green,
                     resolution: MapResolution::High,
-                })
+                });
+                for line in &ddos_lines {
+                    ctx.draw(line);
+                }
             })
-            .x_bounds([-180.0, 180.0])
-            .y_bounds([-90.0, 90.0]);
+            .x_bounds(x_map_bounds)
+            .y_bounds(y_map_bounds);
 
         map_content
             .block(map_block)
@@ -143,7 +194,7 @@ impl<T: DDOSProvider> Widget for &App<T> {
         let request_block = Block::new().borders(Borders::ALL).title("RequestQueue");
         let request_content = List::new(self.ddos_attack_queue.iter().map(|ddos_attack| {
             format!(
-                "from {}, to {}",
+                "Ping from: {} -> {}",
                 ddos_attack.get_content().0,
                 ddos_attack.get_content().1,
             )
@@ -163,7 +214,7 @@ impl<T: DDOSProvider> Widget for &App<T> {
             "S. America",
             "Africa",
         ])
-        .select(0)
+        .select(self.tab_code)
         .padding("", "")
         .divider(" ");
         navbar_content.block(navbar_block).render(
