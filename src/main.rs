@@ -14,16 +14,16 @@ use serde::Deserialize;
 use crossterm::event::{self, Event};
 use ratatui::{
     buffer::Buffer,
-    layout::{self, Constraint, Direction, Layout, Rect},
-    style::{Color, Stylize},
+    layout::{Constraint, Direction, Layout, Rect},
+    style::Color,
     symbols::Marker,
-    text::Line,
     widgets::{
         canvas::{Canvas, Map, MapResolution},
-        Block, BorderType, Borders, List, ListItem, Paragraph, Tabs, Widget,
+        Block, Borders, List, Paragraph, Tabs, Widget,
     },
     DefaultTerminal,
 };
+
 //
 // Will decouple cloudflare reqwesting into library file later
 //
@@ -37,51 +37,82 @@ struct CloudflareResponse {
 
 #[derive(Deserialize, Debug)]
 struct CloudflareDDOSAttackResult {
-    top_0: Vec<CloudflareAttack>,
+    top_0: VecDeque<DDOSAttack>,
 }
 
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
-struct CloudflareAttack {
+struct DDOSAttack {
     origin_country_alpha2: String,
     origin_country_name: String,
     target_country_alpha2: String,
     target_country_name: String,
 }
 
-async fn get_content() -> CloudflareResponse {
-    let token: String = match std::env::var("CLOUDFLARE_API_KEY") {
-        Ok(val) => val,
-        Err(e) => {
-            println!("Cannot find cloudflare API key, {}", e);
-            "".to_string()
+trait DDOSProvider {
+    async fn get_ddos_attacks(
+        &mut self,
+        time_interval: TimeDelta,
+    ) -> Result<VecDeque<DDOSAttack>, &'static str>;
+}
+
+#[derive(Debug)]
+struct CloudflareDDOSCompoent {}
+
+impl CloudflareDDOSCompoent {
+    fn new() -> Self {
+        Self {}
+    }
+}
+
+impl CloudflareDDOSCompoent {
+    async fn cloudflare_ddos(&self, time_interval: TimeDelta) -> CloudflareResponse {
+        let token: String = match std::env::var("CLOUDFLARE_API_KEY") {
+            Ok(val) => val,
+            Err(e) => {
+                println!("Cannot find cloudflare API key, {}", e);
+                "".to_string()
+            }
+        };
+
+        let client: Client = Client::new();
+        let auth_value =
+            HeaderValue::from_str(&format!("Bearer {}", token)).expect("Invalid API Token format");
+
+        let end_time: DateTime<Utc> = SystemTime::now().into();
+        let start_time: DateTime<Utc> = end_time - time_interval;
+
+        let endpoint_url = format!(
+            "https://api.cloudflare.com/client/v4/radar/attacks/layer7/top/attacks?dateStart={}&dateEnd={}",
+            start_time.format("%Y-%m-%dT%H:%M:%SZ"),
+            end_time.format("%Y-%m-%dT%H:%M:%SZ")
+        );
+
+        client
+            .get(endpoint_url)
+            .header(AUTHORIZATION, auth_value)
+            .send()
+            .await
+            .unwrap()
+            .json::<CloudflareResponse>()
+            .await
+            .unwrap()
+    }
+}
+
+impl DDOSProvider for CloudflareDDOSCompoent {
+    async fn get_ddos_attacks(
+        &mut self,
+        time_interval: TimeDelta,
+    ) -> Result<VecDeque<DDOSAttack>, &'static str> {
+        let cloudflare_response = self.cloudflare_ddos(time_interval).await;
+
+        if cloudflare_response.success {
+            Ok(cloudflare_response.result.top_0)
+        } else {
+            Err("Cloudflare Error")
         }
-    };
-
-    let client: Client = Client::new();
-    let auth_value =
-        HeaderValue::from_str(&format!("Bearer {}", token)).expect("Invalid API Token format");
-
-    let end_time: DateTime<Utc> = SystemTime::now().into();
-    let start_time: DateTime<Utc> = end_time - TimeDelta::minutes(360);
-
-    let endpoint_url = format!(
-        "https://api.cloudflare.com/client/v4/radar/attacks/layer7/top/attacks?dateStart={}&dateEnd={}",
-        start_time.format("%Y-%m-%dT%H:%M:%SZ"),
-        end_time.format("%Y-%m-%dT%H:%M:%SZ")
-    );
-
-    // Bunch of errors I am ignoring for now
-
-    client
-        .get(endpoint_url)
-        .header(AUTHORIZATION, auth_value)
-        .send()
-        .await
-        .unwrap()
-        .json::<CloudflareResponse>()
-        .await
-        .unwrap()
+    }
 }
 
 #[derive(Debug, Default)]
@@ -90,37 +121,53 @@ enum Region {
     World,
     Europe,
     Asia,
-    Australasia,
+    Oceania,
     NorthAmerica,
     SouthAmerica,
     Africa,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct AppSettings {
+    current_region: Region,
     time_interval: TimeDelta,
 }
 
-#[derive(Debug, Default)]
-struct App {
-    map_region_display: Region,
-    cloudflare_attack_queue: VecDeque<CloudflareAttack>,
+impl AppSettings {
+    fn new() -> Self {
+        Self {
+            current_region: Region::default(),
+            time_interval: TimeDelta::minutes(360),
+        }
+    }
+}
+#[derive(Debug)]
+struct App<T: DDOSProvider> {
+    ddos_componet: T,
+    ddos_attack_queue: VecDeque<DDOSAttack>,
     settings: AppSettings,
 }
 
-impl App {
+impl App<CloudflareDDOSCompoent> {
     pub fn new(settings: AppSettings) -> Self {
         Self {
-            map_region_display: Region::World,
-            cloudflare_attack_queue: VecDeque::new(),
+            ddos_componet: CloudflareDDOSCompoent::new(),
+            ddos_attack_queue: VecDeque::new(),
             settings,
         }
     }
 
-    pub fn run(&self, mut terminal: DefaultTerminal) -> Result<(), std::io::Error> {
+    pub fn run(mut self, mut terminal: DefaultTerminal) -> Result<(), std::io::Error> {
         loop {
-            terminal.draw(|frame| {
-                frame.render_widget(self, frame.area());
+            if self.ddos_attack_queue.is_empty() {
+                self.ddos_attack_queue = trpl::block_on(
+                    self.ddos_componet
+                        .get_ddos_attacks(self.settings.time_interval),
+                )
+                .unwrap_or_else(|_| VecDeque::new());
+            }
+            let _ = terminal.draw(|frame| {
+                frame.render_widget(&self, frame.area());
             });
             if matches!(event::read()?, Event::Key(_)) {
                 break Ok(());
@@ -137,7 +184,7 @@ enum DisplayWidgetLayoutArea {
     Settings,
 }
 
-impl Widget for &App {
+impl<T: DDOSProvider> Widget for &App<T> {
     fn render(self, area: Rect, buffer: &mut Buffer) {
         let layouts: HashMap<DisplayWidgetLayoutArea, Rect> = {
             let display_settings_layout = Layout::default()
@@ -193,21 +240,30 @@ impl Widget for &App {
             .render(*layouts.get(&DisplayWidgetLayoutArea::Map).unwrap(), buffer);
 
         let request_block = Block::new().borders(Borders::ALL).title("RequestQueue");
-        let request_content = List::new(vec![
-            ListItem::new("example1"),
-            ListItem::new("exmaple2"),
-            ListItem::new("e23"),
-        ]);
+        let request_content = List::new(self.ddos_attack_queue.iter().map(|ddos_attack| {
+            format!(
+                "from {}, to {}",
+                ddos_attack.origin_country_name, ddos_attack.target_country_name
+            )
+        }));
         request_content.block(request_block).render(
             *layouts.get(&DisplayWidgetLayoutArea::RequestQueue).unwrap(),
             buffer,
         );
 
         let navbar_block = Block::new().borders(Borders::ALL).title("Navbar");
-        let navbar_content = Tabs::new(vec!["Tab1", "Tab2", "Tab3"])
-            .select(0)
-            .padding("", "")
-            .divider(" ");
+        let navbar_content = Tabs::new(vec![
+            "World",
+            "Europe",
+            "Asia",
+            "Oceania",
+            "N. America",
+            "S. America",
+            "Africa",
+        ])
+        .select(0)
+        .padding("", "")
+        .divider(" ");
         navbar_content.block(navbar_block).render(
             *layouts.get(&DisplayWidgetLayoutArea::Navbar).unwrap(),
             buffer,
@@ -217,9 +273,7 @@ impl Widget for &App {
 
 fn main() -> Result<(), std::io::Error> {
     let terminal = ratatui::init();
-    let app = App::new(AppSettings {
-        time_interval: TimeDelta::minutes(360),
-    });
+    let app = App::new(AppSettings::new());
     let result = app.run(terminal);
     ratatui::restore();
     result
