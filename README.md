@@ -9,7 +9,7 @@
 
 | World View 1 | World View 2 | Asia View |
 | :---: | :---: | :---: |
-| ![Global View1](img/Screenshot) | ![Global View2](img/Screenshot) | ![Zoomed in view of Asia](img/Screenshot) |
+| ![Global View1](img/Screenshot1.png) | ![Global View2](img/Screenshot2.png) | ![Zoomed in view of Asia](img/Screenshot3.png) |
 | Shows global traffic overview. | Zooms in on Asia region. |
 
 
