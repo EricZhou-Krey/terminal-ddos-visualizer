@@ -39,7 +39,7 @@ impl AppSettings {
     pub fn new() -> Self {
         Self {
             current_region: Region::default(),
-            time_interval: TimeDelta::minutes(36000),
+            time_interval: TimeDelta::minutes(360),
         }
     }
 }
