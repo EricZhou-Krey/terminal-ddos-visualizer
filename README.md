@@ -7,9 +7,9 @@
 
 ## 💻 Screenshots
 
-| World View | Asia View |
-| :---: | :---: |
-| ![Global traffic overview](Screenshot 2025-12-16 21.13.50.png) | ![Zoomed in view of Asia](Screenshot 2025-12-16 21.14.19.png) |
+| World View 1 | World View 2 | Asia View |
+| :---: | :---: | :---: |
+| ![Global View1](img/Screenshot) | ![Global View2](img/Screenshot) | ![Zoomed in view of Asia](img/Screenshot) |
 | Shows global traffic overview. | Zooms in on Asia region. |
 
 
